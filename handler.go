@@ -36,13 +36,13 @@ func (e Error) Error() string {
 func New(next HandlerNext) *Handler {
 	return &Handler{
 		next,
-		make(map[string]reflect.Value),
+		make(map[string]*parameterizedMethod),
 	}
 }
 
 type Handler struct {
-	next       HandlerNext
-	namespaces map[string]reflect.Value
+	next          HandlerNext
+	cachedMethods map[string]*parameterizedMethod
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +92,17 @@ func (h *Handler) AddNamespace(name string, object interface{}) error {
 	if !v.IsValid() {
 		return errors.New(fmt.Sprintf("Invalid value for namespace: %v", v))
 	}
-	h.namespaces[name] = v
+	// iterate over every method in the namespace
+	t := v.Type()
+	for i := 0; i < t.NumMethod(); i++ {
+		m := t.Method(i)
+		methodname := fmt.Sprintf("%s.%s", name, m.Name)
+		parameterized, err := newParameterizedMethod(v.Method(i))
+		if err != nil {
+			return err
+		}
+		h.cachedMethods[methodname] = parameterized
+	}
 	return nil
 }
 
