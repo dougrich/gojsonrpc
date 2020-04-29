@@ -17,7 +17,7 @@ func (r Request) getNamespaceFunction() (string, string) {
 	}
 }
 
-func (h *Handler) asyncProcessRequest(req *Request, wg *sync.WaitGroup, results chan Result) {
+func (h *Handler) asyncProcessRequest(c context.Context, req *Request, wg *sync.WaitGroup, results chan Result) {
 	defer wg.Done()
 	method, ok := h.cachedMethods[req.MethodName]
 	if !ok {
@@ -32,7 +32,7 @@ func (h *Handler) asyncProcessRequest(req *Request, wg *sync.WaitGroup, results 
 		return
 	}
 
-	result, err := method.Call(context.Background(), req.Parameters)
+	result, err := method.Call(c, req.Parameters)
 
 	results <- Result{
 		ID:      req.ID,
@@ -42,12 +42,12 @@ func (h *Handler) asyncProcessRequest(req *Request, wg *sync.WaitGroup, results 
 	}
 }
 
-func (h *Handler) processRequests(requests []Request) ([]Result, error) {
+func (h *Handler) processRequests(c context.Context, requests []Request) ([]Result, error) {
 	wg := sync.WaitGroup{}
 	rchan := make(chan Result)
 	wg.Add(len(requests))
 	for i := range requests {
-		go h.asyncProcessRequest(&requests[i], &wg, rchan)
+		go h.asyncProcessRequest(c, &requests[i], &wg, rchan)
 	}
 	go func() {
 		wg.Wait()

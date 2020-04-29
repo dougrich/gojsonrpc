@@ -65,7 +65,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// for each request
 	// - create a new goroutine to solve it
 	// - wait until resolved
-	results, err := h.processRequests(requests)
+	results, err := h.processRequests(r.Context(), requests)
 	if err != nil {
 		panic(err)
 	}
