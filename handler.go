@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"github.com/gorilla/websocket"
 )
 
 type Request struct {
@@ -37,15 +38,24 @@ func New(next HandlerNext) *Handler {
 	return &Handler{
 		next,
 		make(map[string]*parameterizedMethod),
+		websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+		},
 	}
 }
 
 type Handler struct {
 	next          HandlerNext
 	cachedMethods map[string]*parameterizedMethod
+	upgrader websocket.Upgrader
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if websocket.IsWebSocketUpgrade(r) {
+		h.ServeWebsocket(w, r)
+		return
+	}
 
 	requests, err := parseRPCRequests(r)
 	if err != nil {
@@ -85,6 +95,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(b)
+}
+
+func (h *Handler) ServeWebsocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := h.upgrader.Upgrade(w, r, nil)
+	defer conn.Close()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	writer := make(chan interface{})
+	go func() {
+		for {
+			msg, ok := <- writer
+			if !ok {
+				return
+			}
+			if err = conn.WriteJSON(msg); err != nil {
+				panic(err)
+			}
+		}
+	}()
+	for {
+		_, p, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				log.Printf("error: %v, user-agent: %v", err, r.Header.Get("User-Agent"))
+			}
+			close(writer)
+			return
+		}
+		go func(p []byte) {
+			var req Request
+			if err := json.Unmarshal(p, &req); err != nil {
+				panic(err)
+			}
+			results, err := h.processRequests(r.Context(), []Request{req})
+			if err != nil {
+				panic(err)
+			}
+			for _, res := range results {
+				writer <- res
+			}
+		}(p)
+	}
 }
 
 func (h *Handler) AddNamespace(name string, object interface{}) error {
